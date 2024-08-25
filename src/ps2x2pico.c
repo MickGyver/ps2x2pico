@@ -102,6 +102,7 @@ void tuh_hid_mount_cb(u8 dev_addr, u8 instance, u8 const* desc_report, u16 desc_
   }
   printf("\n\n");
 
+  hid_parse_report_descriptor(dev_addr, instance, desc_report, desc_len);
 
   if (hid_if_proto == HID_ITF_PROTOCOL_KEYBOARD || hid_if_proto == HID_ITF_PROTOCOL_MOUSE) {
     if (!tuh_hid_receive_report(dev_addr, instance)) {

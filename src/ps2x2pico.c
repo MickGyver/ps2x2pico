@@ -32,6 +32,7 @@
 #include "bsp/board_api.h"
 #include "tusb.h"
 #include "ps2x2pico.h"
+#include "hid_parse.h"
 
 static void print_utf16(uint16_t *temp_buf, size_t buf_len);
 void print_device_descriptor(tuh_xfer_t* xfer);
@@ -101,6 +102,7 @@ void tuh_hid_mount_cb(u8 dev_addr, u8 instance, u8 const* desc_report, u16 desc_
   }
   printf("\n\n");
 
+
   if (hid_if_proto == HID_ITF_PROTOCOL_KEYBOARD || hid_if_proto == HID_ITF_PROTOCOL_MOUSE) {
     if (!tuh_hid_receive_report(dev_addr, instance)) {
       printf("ERROR: Could not register for HID(%d,%d,%s)!\n", dev_addr, instance, hidprotostr);
@@ -125,6 +127,7 @@ void tuh_hid_umount_cb(u8 dev_addr, u8 instance) {
   if(dev_addr == kb_addr && instance == kb_inst) {
     kb_addr = 0;
     kb_inst = 0;
+    hid_remove_report_descriptors(dev_addr, instance);
   }
   //tuh_deinit(TUH_OPT_RHPORT);
   //printf("deinit(%d)\n", TUH_OPT_RHPORT);
@@ -133,6 +136,8 @@ void tuh_hid_umount_cb(u8 dev_addr, u8 instance) {
 }
 
 void tuh_hid_report_received_cb(u8 dev_addr, u8 instance, u8 const* report, u16 len) {
+
+  hid_report_t *reportDescriptor = hid_get_report_descriptor(dev_addr, instance, report);
 
   switch(tuh_hid_interface_protocol(dev_addr, instance)) {
     case HID_ITF_PROTOCOL_KEYBOARD:
@@ -146,7 +151,13 @@ void tuh_hid_report_received_cb(u8 dev_addr, u8 instance, u8 const* report, u16 
       printf("HID_KB(%d,%d): r[2]=0x%x,r[0]=0x%x,l=%d\n", dev_addr, instance, report[2], report[0], len);
       #endif
       #endif
-      kb_usb_receive(report, len);
+      if(reportDescriptor)
+        if(reportDescriptor->usage == H_USAGE_KEYBOARD) {
+          if(reportDescriptor->reportId > 0)
+            kb_usb_receive(&report[1], len-1);
+          else
+            kb_usb_receive(report, len);
+        }
       tuh_hid_receive_report(dev_addr, instance);
     break;
     
@@ -161,7 +172,9 @@ void tuh_hid_report_received_cb(u8 dev_addr, u8 instance, u8 const* report, u16 
       printf("HID_MS(%d,%d)\n", dev_addr, instance);
       #endif
       #endif
-      ms_usb_receive(report);
+      if(reportDescriptor)
+        if(reportDescriptor->usage == H_USAGE_MOUSE)
+          ms_usb_receive(report);
       tuh_hid_receive_report(dev_addr, instance);
     break;
   }
@@ -177,6 +190,8 @@ void main() {
   gpio_set_dir(LVIN, GPIO_OUT);
   gpio_put(LVOUT, 1);
   gpio_put(LVIN, 1);
+
+  hid_remove_report_descriptors(0, 0); // Reset all device descriptors
   
   tusb_init();
   kb_init(KBOUT, KBIN);

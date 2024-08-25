@@ -58,6 +58,8 @@ ps2in kb_in;
 #define KB_MSG_ACK_FA 0xfa
 #define KB_MSG_RESEND_FE 0xfe
 
+#define KB_REPORT_SIZE 0x08
+
 typedef enum {
   KBH_STATE_IDLE,
   KBH_STATE_SET_LEDS_ED,
@@ -107,7 +109,7 @@ u32 repeat_us;
 u16 delay_ms;
 alarm_id_t repeater;
 
-u8 prev_rpt[] = { 0, 0, 0, 0, 0, 0, 0, 0 };
+u8 prev_rpt[30] = { 0 };
 u8 key2repeat = 0;
 
 u8 last_byte_sent = 0;
@@ -342,11 +344,16 @@ void kb_send_key(u8 key, bool is_key_pressed, u8 modifiers) {
 
 void kb_usb_receive(u8 const* report, u16 len) {
 
+  u8 rbits, pbits, nkro;
+
+  // Assume NKRO if length > 8
+  nkro = len > 8 ? true : false;
+
   // go over modifier keys which are in report[0]
   if(report[0] != prev_rpt[0]) {
     // modifiers have changed
-    u8 rbits = report[0];
-    u8 pbits = prev_rpt[0];
+    rbits = report[0];
+    pbits = prev_rpt[0];
     
     for(u8 j = 0; j <= MOD2PS2_IDX_MAX; j++) {
       if((rbits & 1) != (pbits & 1)) {
@@ -358,48 +365,72 @@ void kb_usb_receive(u8 const* report, u16 len) {
     }
   }
 
-  // NOTE: report[1] is completely ignored.
-  //       It is usually 0x00. Log if otherwise.
-  if (report[1]) {
-    printf("INFO: report[1]=0x%x\n",report[1]); // just curious... ;)
-  }
-  
-  // go over activated non-modifier keys in prev_rpt and
-  // check if they are still in the current report
-  for(u8 i = 2; i < sizeof(prev_rpt); i++) {
-    if(prev_rpt[i]) {
-      bool brk = true;
-      
-      for(u8 j = 2; j < len; j++) {
-        if(prev_rpt[i] == report[j]) {
-          brk = false;
-          break;
+  if(nkro)
+  {
+    // Iterate the rest of the bytes in the report
+    for(uint32_t i=1; i<len; i++) 
+    {
+      if(report[i] != prev_rpt[i]) // Has byte changed
+      {
+        rbits = report[i];
+        pbits = prev_rpt[i];
+
+        for(u8 b = 0; b <= MOD2PS2_IDX_MAX; b++) // Iterate all bits in the current byte
+        {
+          if((rbits & 1) != (pbits & 1))
+            kb_send_key((i-1)*8+b, (rbits & 1) ? true : false, report[0]);
+            
+          rbits = rbits >> 1;
+          pbits = pbits >> 1;
         }
-      }
-      
-      if(brk) {
-        // send break if key not pressed anymore
-        kb_send_key(prev_rpt[i], false, report[0]);
       }
     }
   }
-  
-  // go over activated non-modifier keys in report and check if they were
-  // already in prev_rpt.
-  for(u8 i = 2; i < len; i++) {
-    if(report[i]) {
-      bool make = true;
-      
-      for(u8 j = 2; j < sizeof(prev_rpt); j++) {
-        if(report[i] == prev_rpt[j]) {
-          make = false;
-          break;
+  else
+  {
+    // NOTE: report[1] is completely ignored.
+    //       It is usually 0x00. Log if otherwise.
+    if (report[1]) {
+      printf("INFO: report[1]=0x%x\n",report[1]); // just curious... ;)
+    }
+    
+    // go over activated non-modifier keys in prev_rpt and
+    // check if they are still in the current report
+    for(u8 i = 2; i < KB_REPORT_SIZE; i++) {
+      if(prev_rpt[i]) {
+        bool brk = true;
+        
+        for(u8 j = 2; j < len; j++) {
+          if(prev_rpt[i] == report[j]) {
+            brk = false;
+            break;
+          }
+        }
+        
+        if(brk) {
+          // send break if key not pressed anymore
+          kb_send_key(prev_rpt[i], false, report[0]);
         }
       }
-      
-      // send make if key was in the current report the first time
-      if(make) {
-        kb_send_key(report[i], true, report[0]);
+    }
+    
+    // go over activated non-modifier keys in report and check if they were
+    // already in prev_rpt.
+    for(u8 i = 2; i < len; i++) {
+      if(report[i]) {
+        bool make = true;
+        
+        for(u8 j = 2; j < KB_REPORT_SIZE; j++) {
+          if(report[i] == prev_rpt[j]) {
+            make = false;
+            break;
+          }
+        }
+        
+        // send make if key was in the current report the first time
+        if(make) {
+          kb_send_key(report[i], true, report[0]);
+        }
       }
     }
   }
